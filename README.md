@@ -131,8 +131,10 @@ All errors use one JSON shape:
 - [Phase 3 guide: caching, invalidation, rate limiting, experiments, interview questions](docs/PHASE-3-GUIDE.md)
 - [ADR 0002: Sync REST with idempotent reservations](docs/adr/0002-sync-rest-with-idempotent-reservations.md)
 - [ADR 0003: Redis cache-aside and gateway rate limiting](docs/adr/0003-redis-cache-aside-and-gateway-rate-limiting.md)
+- [Phase 5 guide: Docker, Docker Compose, containerized ShopFlow stack](docs/PHASE-5-GUIDE.md)
 - [Phase 4 guide: Kafka event-driven orders, transactional outbox, idempotency, cancellation, testing, interview questions](docs/PHASE-4-GUIDE.md)
 - [Phase 6 guide: Testcontainers, PostgreSQL/Redis/Kafka integration tests, Maven Failsafe, troubleshooting, interview questions](docs/PHASE-6-GUIDE.md)
+- [Phase 7 guide: GitHub Actions CI/CD](docs/PHASE-7-GUIDE.md)
 
 ## Roadmap
 - [x] Phase 1 — Modular monolith REST API
@@ -141,7 +143,7 @@ All errors use one JSON shape:
 - [x] Phase 4 — Kafka event-driven order processing
 - [x] Phase 5 — Docker and Docker Compose for all services
 - [x] Phase 6 — Integration testing with Testcontainers
-- [ ] Phase 7 — GitHub Actions CI/CD
+- [x] Phase 7 — GitHub Actions CI/CD
 - [ ] Phase 8 — Kubernetes
 - [ ] Phase 9 — Terraform
 - [ ] Phase 10 — Prometheus, Grafana, load testing
