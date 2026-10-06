@@ -1,0 +1,704 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shopflow
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shopflow-config
+  namespace: shopflow
+data:
+  PRODUCT_SERVICE_URL: "http://product-service:8082"
+  USER_SERVICE_URL: "http://user-service:8081"
+  ORDER_SERVICE_URL: "http://order-service:8083"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  USER_DB_URL: "jdbc:postgresql://postgres:5432/shopflow_users"
+  PRODUCT_DB_URL: "jdbc:postgresql://postgres:5432/shopflow_products"
+  ORDER_DB_URL: "jdbc:postgresql://postgres:5432/shopflow_orders"
+  GATEWAY_PORT: "8080"
+  USER_SERVICE_PORT: "8081"
+  PRODUCT_SERVICE_PORT: "8082"
+  ORDER_SERVICE_PORT: "8083"
+  OUTBOX_POLL_INTERVAL_MS: "1000"
+  PRODUCT_CACHE_TTL: "PT10M"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: shopflow
+data:
+  init-databases.sql: |
+    CREATE DATABASE shopflow_users;
+    CREATE DATABASE shopflow_products;
+    CREATE DATABASE shopflow_orders;
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: shopflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: shopflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+  namespace: shopflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: shopflow
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: shopflow
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: shopflow
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: shopflow-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shopflow-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/init-databases.sql
+              subPath: init-databases.sql
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: init
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: shopflow
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: shopflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: shopflow
+spec:
+  selector:
+    app: kafka
+  ports:
+    - name: internal
+      port: 9092
+      targetPort: 9092
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: shopflow
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:4.3.1
+          ports:
+            - containerPort: 9092
+            - containerPort: 9093
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT"
+            - name: KAFKA_LISTENERS
+              value: "CONTROLLER://:9093,INTERNAL://:9092"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "INTERNAL://kafka:9092"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "INTERNAL"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "1@kafka:9093"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+              value: "0"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 750m
+              memory: 768Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kafka-data
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-init
+  namespace: shopflow
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: kafka-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kafka-init
+          image: apache/kafka:4.3.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:9092 >/dev/null 2>&1; do
+                echo "Waiting for Kafka..."
+                sleep 5
+              done
+              for topic in order.created.v1 stock.reserved.v1 stock.reservation.failed.v1 order.cancelled.v1; do
+                /opt/kafka/bin/kafka-topics.sh \
+                  --bootstrap-server kafka:9092 \
+                  --create --if-not-exists \
+                  --topic "$topic" \
+                  --partitions 3 \
+                  --replication-factor 1
+              done
+              echo "Kafka topics ready."
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: shopflow
+spec:
+  selector:
+    app: user-service
+  ports:
+    - port: 8081
+      targetPort: 8081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: shopflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432; do echo 'waiting for postgres'; sleep 2; done"]
+      containers:
+        - name: user-service
+          image: shopflow/user-service:phase8
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: shopflow-config
+            - secretRef:
+                name: shopflow-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres:5432/shopflow_users"
+            - name: USER_DB_URL
+              value: "jdbc:postgresql://postgres:5432/shopflow_users"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=20"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: shopflow
+spec:
+  selector:
+    app: product-service
+  ports:
+    - port: 8082
+      targetPort: 8082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: shopflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432; do echo 'waiting for postgres'; sleep 2; done"]
+        - name: wait-for-redis
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z redis 6379; do echo 'waiting for redis'; sleep 2; done"]
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z kafka 9092; do echo 'waiting for kafka'; sleep 2; done"]
+      containers:
+        - name: product-service
+          image: shopflow/product-service:phase8
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: shopflow-config
+            - secretRef:
+                name: shopflow-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres:5432/shopflow_products"
+            - name: PRODUCT_DB_URL
+              value: "jdbc:postgresql://postgres:5432/shopflow_products"
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=20"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: shopflow
+spec:
+  selector:
+    app: order-service
+  ports:
+    - port: 8083
+      targetPort: 8083
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: shopflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432; do echo 'waiting for postgres'; sleep 2; done"]
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z kafka 9092; do echo 'waiting for kafka'; sleep 2; done"]
+        - name: wait-for-product-service
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z product-service 8082; do echo 'waiting for product-service'; sleep 2; done"]
+      containers:
+        - name: order-service
+          image: shopflow/order-service:phase8
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: shopflow-config
+            - secretRef:
+                name: shopflow-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres:5432/shopflow_orders"
+            - name: ORDER_DB_URL
+              value: "jdbc:postgresql://postgres:5432/shopflow_orders"
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: PRODUCT_SERVICE_URL
+              value: "http://product-service:8082"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=20"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8083
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8083
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: shopflow
+spec:
+  type: NodePort
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: shopflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z redis 6379; do echo 'waiting for redis'; sleep 2; done"]
+        - name: wait-for-user-service
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z user-service 8081; do echo 'waiting for user-service'; sleep 2; done"]
+        - name: wait-for-product-service
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z product-service 8082; do echo 'waiting for product-service'; sleep 2; done"]
+        - name: wait-for-order-service
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z order-service 8083; do echo 'waiting for order-service'; sleep 2; done"]
+      containers:
+        - name: api-gateway
+          image: shopflow/api-gateway:phase8
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: shopflow-config
+            - secretRef:
+                name: shopflow-secrets
+          env:
+            - name: GATEWAY_PORT
+              value: "8080"
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: USER_SERVICE_URL
+              value: "http://user-service:8081"
+            - name: PRODUCT_SERVICE_URL
+              value: "http://product-service:8082"
+            - name: ORDER_SERVICE_URL
+              value: "http://order-service:8083"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=20"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
