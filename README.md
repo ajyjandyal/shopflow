@@ -134,7 +134,7 @@ All errors use one JSON shape:
 - [x] Phase 1 — Modular monolith REST API
 - [x] Phase 2 — Microservices + API Gateway
 - [x] Phase 3 — Redis caching and rate limiting
-- [ ] Phase 4 — Kafka event-driven order processing
+- [x] Phase 4 — Kafka event-driven order processing
 - [ ] Phase 5 — Docker and Docker Compose for all services
 - [ ] Phase 6 — Integration testing with Testcontainers
 - [ ] Phase 7 — GitHub Actions CI/CD
