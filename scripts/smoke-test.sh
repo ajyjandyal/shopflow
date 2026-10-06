@@ -104,14 +104,36 @@ expect 409 "adding more than available stock is rejected"
 request POST /api/v1/orders "$BUYER"
 expect 201 "buyer places order (stock reserved remotely)"
 ORDER_ID=$(field id)
-ORDER_STATUS=$(field status)
+
+# Kafka processing is asynchronous. Poll until the order is CONFIRMED.
+ORDER_STATUS=""
+for i in $(seq 1 20); do
+  request GET "/api/v1/orders/$ORDER_ID" "$BUYER"
+  ORDER_STATUS=$(field status)
+
+  if [ "$ORDER_STATUS" = "CONFIRMED" ]; then
+    break
+  fi
+
+  sleep 1
+done
+
 [ "$ORDER_STATUS" = "CONFIRMED" ]
 check $? "order status is CONFIRMED (got '$ORDER_STATUS')"
 
-# The product was cached with stock 3 just before the order. Seeing 1 here proves the
-# reservation evicted the cache entry.
-request GET "/api/v1/products/$PRODUCT_ID"
-STOCK=$(field stockQuantity)
+# Poll until the reservation reaches Product Service and Redis cache is evicted.
+STOCK=""
+for i in $(seq 1 20); do
+  request GET "/api/v1/products/$PRODUCT_ID"
+  STOCK=$(field stockQuantity)
+
+  if [ "$STOCK" = "1" ]; then
+    break
+  fi
+
+  sleep 1
+done
+
 [ "$STOCK" = "1" ]
 check $? "stock went from 3 to 1 (reservation evicted the cached product; got '$STOCK')"
 
@@ -124,8 +146,20 @@ expect 404 "internal endpoints are NOT reachable through the gateway"
 request POST "/api/v1/orders/$ORDER_ID/cancel" "$BUYER"
 expect 200 "buyer cancels the order"
 
-request GET "/api/v1/products/$PRODUCT_ID"
-STOCK=$(field stockQuantity)
+# Cancellation is asynchronous. Poll until Product Service processes
+# order.cancelled.v1 and releases the reserved stock.
+STOCK=""
+for i in $(seq 1 20); do
+  request GET "/api/v1/products/$PRODUCT_ID"
+  STOCK=$(field stockQuantity)
+
+  if [ "$STOCK" = "3" ]; then
+    break
+  fi
+
+  sleep 1
+done
+
 [ "$STOCK" = "3" ]
 check $? "cancel returned stock and evicted the cache (back to 3; got '$STOCK')"
 
