@@ -136,7 +136,7 @@ All errors use one JSON shape:
 - [x] Phase 2 — Microservices + API Gateway
 - [x] Phase 3 — Redis caching and rate limiting
 - [x] Phase 4 — Kafka event-driven order processing
-- [ ] Phase 5 — Docker and Docker Compose for all services
+- [x] Phase 5 — Docker and Docker Compose for all services
 - [ ] Phase 6 — Integration testing with Testcontainers
 - [ ] Phase 7 — GitHub Actions CI/CD
 - [ ] Phase 8 — Kubernetes
