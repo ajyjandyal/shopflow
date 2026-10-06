@@ -6,6 +6,24 @@ spring:
       - optional:file:.env[.properties]
       - optional:file:../.env[.properties]
       - optional:file:../../.env[.properties]
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: ${KAFKA_ORDER_GROUP:shopflow-order-service}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      isolation-level: read_committed
+    listener:
+      ack-mode: manual_immediate
+      missing-topics-fatal: true
   datasource:
     url: ${ORDER_DB_URL:jdbc:postgresql://localhost:5432/shopflow_orders}
     username: ${DB_USERNAME}
@@ -41,6 +59,8 @@ app:
     product-url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
     connect-timeout: PT2S
     read-timeout: PT5S
+  outbox:
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:1000}
 
 management:
   endpoints:
