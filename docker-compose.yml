@@ -1,5 +1,6 @@
-# Phase 1: only infrastructure (PostgreSQL). The Spring app runs on your machine.
-# In Phase 5 the application services will be added here too.
+# Phase 2: infrastructure only (PostgreSQL with one database per service).
+# Alternative to installing PostgreSQL with Homebrew. Services still run on your machine.
+# In Phase 5 the services themselves will be added here.
 services:
   postgres:
     image: postgres:16-alpine
@@ -12,6 +13,7 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

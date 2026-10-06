@@ -3,114 +3,89 @@
 A cloud-native e-commerce and order processing platform, built progressively from a
 well-structured monolith into event-driven microservices.
 
-> **Current status: Phase 1 — modular monolith.** Spring Boot REST API with JWT auth,
-> role-based access control (USER / SELLER / ADMIN), PostgreSQL with Flyway migrations,
-> concurrency-safe checkout, pagination, validation and OpenAPI docs.
+> **Current status: Phase 2 — microservices.** An API gateway in front of three Spring Boot
+> services (users, products, orders), each with its own PostgreSQL database. Checkout uses
+> idempotent stock reservations with retries and compensation instead of a single
+> transaction. The Phase 1 monolith remains in `backend/` for reference.
 
-## Tech stack (Phase 1)
+## Tech stack
 
 | Area | Choice |
 |---|---|
 | Language / runtime | Java 21 (LTS) |
-| Framework | Spring Boot 3.5 (Web, Data JPA, Security, Validation, Actuator) |
-| Database | PostgreSQL 16, Flyway migrations |
-| Auth | JWT (jjwt 0.12), BCrypt password hashing |
-| API docs | springdoc-openapi (Swagger UI) |
+| Services | Spring Boot 3.5 (Web, Data JPA, Security, Validation, Actuator) |
+| Gateway | Spring Cloud Gateway 2025.0 (reactive) |
+| Service-to-service | Spring `RestClient` with timeouts, retries, idempotency keys |
+| Database | PostgreSQL 16, one database per service, Flyway migrations |
+| Auth | JWT (jjwt 0.12), BCrypt, RBAC (USER / SELLER / ADMIN) |
+| API docs | springdoc-openapi (Swagger UI per service) |
 | Tests | JUnit 5, Mockito, AssertJ |
 
-## Architecture (Phase 1)
+## Architecture
 
 ```mermaid
 flowchart LR
-    Client[Client: curl / Postman / Swagger UI] -->|HTTPS + JWT| Sec[Security filter chain<br/>JWT filter, RBAC, CORS]
-    Sec --> Ctl[REST controllers]
-    subgraph App[shopflow-backend - single Spring Boot app]
-        Ctl --> Auth[auth]
-        Ctl --> Usr[user]
-        Ctl --> Prod[product]
-        Ctl --> Cart[cart]
-        Ctl --> Ord[order]
-    end
-    Auth & Usr & Prod & Cart & Ord --> DB[(PostgreSQL)]
+    C[Client] -->|:8080| GW[api-gateway]
+    GW --> US[user-service :8081]
+    GW --> PS[product-service :8082]
+    GW --> OS[order-service :8083]
+    OS -->|reserve / release stock<br/>internal API| PS
+    US --> UDB[(shopflow_users)]
+    PS --> PDB[(shopflow_products)]
+    OS --> ODB[(shopflow_orders)]
 ```
 
-Each feature package (`auth`, `user`, `product`, `cart`, `order`) owns its entities,
-repository, service, controller and DTOs. Modules reference each other by **id**, not by
-JPA relationships, so they can be split into separate services in Phase 2.
-
-## Database schema
-
+### Checkout flow
 ```mermaid
-erDiagram
-    USERS ||--o{ PRODUCTS : "sells"
-    USERS ||--o| CARTS : "owns"
-    CARTS ||--o{ CART_ITEMS : "contains"
-    PRODUCTS ||--o{ CART_ITEMS : "referenced by"
-    USERS ||--o{ ORDERS : "places"
-    ORDERS ||--|{ ORDER_ITEMS : "contains"
-    USERS { bigint id PK
-            varchar email UK
-            varchar password_hash
-            varchar role }
-    PRODUCTS { bigint id PK
-               bigint seller_id FK
-               varchar name
-               numeric price
-               int stock_quantity
-               boolean active
-               bigint version }
-    CARTS { bigint id PK
-            bigint user_id FK,UK }
-    CART_ITEMS { bigint id PK
-                 bigint cart_id FK
-                 bigint product_id FK
-                 int quantity }
-    ORDERS { bigint id PK
-             bigint user_id FK
-             varchar status
-             numeric total_amount
-             bigint version }
-    ORDER_ITEMS { bigint id PK
-                  bigint order_id FK
-                  bigint product_id
-                  varchar product_name
-                  numeric unit_price
-                  int quantity }
+sequenceDiagram
+    participant C as Client
+    participant GW as Gateway
+    participant OS as order-service
+    participant PS as product-service
+    C->>GW: POST /api/v1/orders (JWT)
+    GW->>OS: forward
+    OS->>OS: load cart, generate reservationId
+    OS->>PS: POST /internal/products/reservations (idempotent)
+    PS->>PS: lock rows, check + decrement stock
+    PS-->>OS: reserved lines (name, price snapshot)
+    OS->>OS: save CONFIRMED order, clear cart (local tx)
+    alt local save fails
+        OS->>PS: release reservation (compensation)
+    end
+    OS-->>C: 201 Created
 ```
 
 ## Getting started
 
 ### Prerequisites
-Java 21 JDK, Maven 3.9+, Docker (for PostgreSQL), Git, and optionally `openssl`.
+Java 21 JDK, Maven 3.9+, PostgreSQL 16 (Homebrew or Docker), Git, `openssl`.
 
-### 1. Configure environment
+### Setup (once)
 ```bash
 cp .env.example .env
-openssl rand -base64 32        # paste the output as JWT_SECRET in .env
-# also set DB_PASSWORD and ADMIN_PASSWORD (12+ characters) in .env
+# Fill in DB_PASSWORD, ADMIN_PASSWORD, and:
+openssl rand -base64 32      # -> JWT_SECRET
+openssl rand -hex 32         # -> INTERNAL_API_KEY
+./scripts/create-databases.sh        # Homebrew PostgreSQL
+# or: docker compose up -d           # Docker PostgreSQL (creates the databases)
 ```
 
-### 2. Start PostgreSQL
+### Run
 ```bash
-docker compose up -d
-docker compose ps              # wait until postgres shows "healthy"
+./scripts/run-local.sh       # build + start all services
+./scripts/smoke-test.sh      # end-to-end test through the gateway
+./scripts/stop-local.sh
 ```
+Swagger UIs: http://localhost:8081/swagger-ui.html (users), :8082 (products), :8083 (orders).
 
-### 3. Run the API
+### Tests
 ```bash
-cd backend
-mvn spring-boot:run
-```
-- Swagger UI: http://localhost:8080/swagger-ui.html
-- Health:     http://localhost:8080/actuator/health
-
-### 4. Run tests
-```bash
-cd backend
-mvn test
+cd services && mvn test
 ```
 
 ## API overview
+
+All public endpoints are served through the gateway at `http://localhost:8080`.
 
 | Method | Path | Access |
 |---|---|---|
@@ -139,11 +114,13 @@ All errors use one JSON shape:
 
 ## Documentation
 - [Phase 1 guide: concepts, walkthrough, testing, troubleshooting, interview questions](docs/PHASE-1-GUIDE.md)
+- [Phase 2 guide: microservices, idempotency, sagas, experiments, interview questions](docs/PHASE-2-GUIDE.md)
 - [ADR 0001: Start with a modular monolith](docs/adr/0001-modular-monolith-first.md)
+- [ADR 0002: Sync REST with idempotent reservations](docs/adr/0002-sync-rest-with-idempotent-reservations.md)
 
 ## Roadmap
 - [x] Phase 1 — Modular monolith REST API
-- [ ] Phase 2 — Microservices + API Gateway
+- [x] Phase 2 — Microservices + API Gateway
 - [ ] Phase 3 — Redis caching and rate limiting
 - [ ] Phase 4 — Kafka event-driven order processing
 - [ ] Phase 5 — Docker and Docker Compose for all services

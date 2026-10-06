@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: product-service
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+      - optional:file:../../.env[.properties]
+  datasource:
+    url: ${PRODUCT_DB_URL:jdbc:postgresql://localhost:5432/shopflow_products}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100
+
+server:
+  port: ${PRODUCT_SERVICE_PORT:8082}
+  error:
+    include-stacktrace: never
+    include-message: never
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:}
+    expiration: ${JWT_EXPIRATION:PT1H}
+    issuer: shopflow
+  internal:
+    api-key: ${INTERNAL_API_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.shopflow: INFO

@@ -16,3 +16,7 @@ build/
 
 # Logs
 *.log
+
+# Local run artifacts (scripts/run-local.sh)
+logs/
+.pids/
