@@ -22,7 +22,7 @@ well-structured monolith into event-driven microservices.
 | Database | PostgreSQL 16, one database per service, Flyway migrations |
 | Auth | JWT (jjwt 0.12), BCrypt, RBAC (USER / SELLER / ADMIN) |
 | API docs | springdoc-openapi (Swagger UI per service) |
-| Tests | JUnit 5, Mockito, AssertJ |
+| Tests | JUnit 5, Mockito, AssertJ, Testcontainers, Maven Failsafe |
 
 ## Architecture
 
@@ -86,7 +86,9 @@ Swagger UIs: http://localhost:8081/swagger-ui.html (users), :8082 (products), :8
 
 ### Tests
 ```bash
-cd services && mvn test
+cd services
+mvn test       # fast unit tests
+mvn verify     # unit + Testcontainers integration tests
 ```
 
 ## API overview
@@ -130,6 +132,7 @@ All errors use one JSON shape:
 - [ADR 0002: Sync REST with idempotent reservations](docs/adr/0002-sync-rest-with-idempotent-reservations.md)
 - [ADR 0003: Redis cache-aside and gateway rate limiting](docs/adr/0003-redis-cache-aside-and-gateway-rate-limiting.md)
 - [Phase 4 guide: Kafka event-driven orders, transactional outbox, idempotency, cancellation, testing, interview questions](docs/PHASE-4-GUIDE.md)
+- [Phase 6 guide: Testcontainers, PostgreSQL/Redis/Kafka integration tests, Maven Failsafe, troubleshooting, interview questions](docs/PHASE-6-GUIDE.md)
 
 ## Roadmap
 - [x] Phase 1 — Modular monolith REST API
@@ -137,7 +140,7 @@ All errors use one JSON shape:
 - [x] Phase 3 — Redis caching and rate limiting
 - [x] Phase 4 — Kafka event-driven order processing
 - [x] Phase 5 — Docker and Docker Compose for all services
-- [ ] Phase 6 — Integration testing with Testcontainers
+- [x] Phase 6 — Integration testing with Testcontainers
 - [ ] Phase 7 — GitHub Actions CI/CD
 - [ ] Phase 8 — Kubernetes
 - [ ] Phase 9 — Terraform
