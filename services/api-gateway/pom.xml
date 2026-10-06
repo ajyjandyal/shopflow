@@ -11,7 +11,7 @@
 
     <artifactId>api-gateway</artifactId>
     <name>api-gateway</name>
-    <description>Single entry point: routing, CORS, timeouts</description>
+    <description>Single entry point: routing, CORS, timeouts, rate limiting</description>
 
     <dependencies>
         <!-- Spring Cloud Gateway (reactive, Netty-based) -->
@@ -22,6 +22,27 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Phase 3: reactive Redis client; enables Spring Cloud Gateway's RedisRateLimiter -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+        </dependency>
+        <!-- Phase 3: verify JWT signatures so rate limits can be keyed per user.
+             (The common module can't be used here: it is servlet-based, the gateway is reactive.) -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

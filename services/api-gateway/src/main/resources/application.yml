@@ -6,6 +6,16 @@ spring:
       - optional:file:.env[.properties]
       - optional:file:../.env[.properties]
       - optional:file:../../.env[.properties]
+  data:
+    # Phase 3: token buckets for rate limiting live in Redis, so every gateway instance
+    # shares the same counters (an in-memory limiter would give each instance its own).
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Short timeouts: if Redis is slow or down, fail fast (the limiter then lets the
+      # request through) instead of making every request wait 60 seconds.
+      timeout: 500ms
+      connect-timeout: 500ms
 
 server:
   port: ${GATEWAY_PORT:8080}
@@ -17,12 +27,35 @@ app:
     order-url: ${ORDER_SERVICE_URL:http://localhost:8083}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  jwt:
+    # Used ONLY to verify tokens so a logged-in user gets their own rate-limit bucket.
+    # Authorization still happens in each service (zero-trust).
+    secret: ${JWT_SECRET:}
+    issuer: shopflow
+  rate-limit:
+    # Token bucket: the bucket holds burst-capacity tokens, refills replenish-rate tokens per
+    # second, and each request costs requested-tokens.
+    # Login/register, per client IP: bursts of 10 requests, then 1 every 6 seconds (10/min).
+    auth:
+      replenish-rate: 1
+      burst-capacity: 60
+      requested-tokens: 6
+    # Everything else, per user (or per IP when not logged in): bursts of 20, then 10/second.
+    api:
+      replenish-rate: 10
+      burst-capacity: 20
+      requested-tokens: 1
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  health:
+    redis:
+      # The rate limiter fails open when Redis is unavailable, so a Redis outage must not
+      # mark the gateway DOWN and take the whole API offline.
+      enabled: false
 
 logging:
   level:

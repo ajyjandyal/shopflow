@@ -23,7 +23,11 @@ public class CorsConfig {
                 .toList());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        config.setExposedHeaders(List.of("Location"));
+        // Browsers hide response headers from JavaScript unless they are "exposed".
+        // The X-RateLimit-* headers let a frontend show "slow down" hints before a 429.
+        config.setExposedHeaders(List.of("Location",
+                "X-RateLimit-Remaining", "X-RateLimit-Burst-Capacity",
+                "X-RateLimit-Replenish-Rate", "X-RateLimit-Requested-Tokens"));
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

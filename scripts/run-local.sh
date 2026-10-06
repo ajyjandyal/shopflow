@@ -11,6 +11,20 @@ if ! grep -q '^INTERNAL_API_KEY=.\{32,\}' .env; then
   exit 1
 fi
 
+# Phase 3: Redis backs the product cache and the gateway's rate limiter.
+REDIS_HOST_CHECK=${REDIS_HOST:-localhost}
+REDIS_PORT_CHECK=${REDIS_PORT:-6379}
+if ! command -v redis-cli >/dev/null 2>&1; then
+  echo "ERROR: redis-cli not found. Install and start Redis:"
+  echo "  brew install redis && brew services start redis"
+  exit 1
+fi
+if [ "$(redis-cli -h "$REDIS_HOST_CHECK" -p "$REDIS_PORT_CHECK" ping 2>/dev/null)" != "PONG" ]; then
+  echo "ERROR: Redis is not answering on $REDIS_HOST_CHECK:$REDIS_PORT_CHECK. Start it with:"
+  echo "  brew services start redis"
+  exit 1
+fi
+
 SERVICES="user-service:8081 product-service:8082 order-service:8083 api-gateway:8080"
 
 for entry in $SERVICES; do

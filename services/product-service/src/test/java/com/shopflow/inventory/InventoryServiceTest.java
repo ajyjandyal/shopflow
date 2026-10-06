@@ -5,16 +5,19 @@ import com.shopflow.inventory.dto.ReservationResponse;
 import com.shopflow.inventory.dto.ReserveStockRequest;
 import com.shopflow.product.Product;
 import com.shopflow.product.ProductRepository;
+import com.shopflow.product.ProductsChangedEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,6 +37,8 @@ class InventoryServiceTest {
     private ProductRepository productRepository;
     @Mock
     private StockReservationRepository reservationRepository;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private InventoryService inventoryService;
@@ -55,6 +60,8 @@ class InventoryServiceTest {
             assertThat(line.quantity()).isEqualTo(2);
         });
         verify(reservationRepository).insertPendingIfAbsent(reservationId);
+        // Stock changed, so the cached product view must be evicted (after commit).
+        verify(eventPublisher).publishEvent(new ProductsChangedEvent(Set.of(1L)));
     }
 
     @Test
@@ -67,6 +74,7 @@ class InventoryServiceTest {
 
         assertThat(response.status()).isEqualTo(ReservationStatus.RESERVED);
         verifyNoInteractions(productRepository);
+        verifyNoInteractions(eventPublisher); // replay: stock unchanged, nothing to evict
     }
 
     @Test
@@ -89,6 +97,7 @@ class InventoryServiceTest {
         assertThatThrownBy(() -> inventoryService.reserve(request(1L, 2))).isInstanceOf(ConflictException.class);
         assertThat(keyboard.getStockQuantity()).isEqualTo(1);
         assertThat(pending.getStatus()).isEqualTo(ReservationStatus.PENDING);
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -105,6 +114,8 @@ class InventoryServiceTest {
         assertThat(keyboard.getStockQuantity()).isEqualTo(5);
         assertThat(second.status()).isEqualTo(ReservationStatus.RELEASED);
         verify(productRepository, times(1)).findAllByIdForUpdate(anyCollection());
+        // Only the first release changed stock, so exactly one eviction event.
+        verify(eventPublisher, times(1)).publishEvent(new ProductsChangedEvent(Set.of(1L)));
     }
 
     @Test
@@ -116,6 +127,7 @@ class InventoryServiceTest {
 
         assertThat(response.status()).isEqualTo(ReservationStatus.RELEASED);
         verifyNoInteractions(productRepository);
+        verifyNoInteractions(eventPublisher);
     }
 
     private ReserveStockRequest request(Long productId, int quantity) {

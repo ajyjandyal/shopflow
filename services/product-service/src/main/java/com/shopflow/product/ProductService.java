@@ -9,6 +9,8 @@ import com.shopflow.product.dto.ProductResponse;
 import com.shopflow.security.AuthenticatedUser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
@@ -23,11 +25,18 @@ public class ProductService {
     private static final Logger log = LoggerFactory.getLogger(ProductService.class);
 
     private final ProductRepository productRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public ProductService(ProductRepository productRepository) {
+    public ProductService(ProductRepository productRepository, ApplicationEventPublisher eventPublisher) {
         this.productRepository = productRepository;
+        this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * Search results are deliberately NOT cached: every combination of filters, sort and page
+     * would be a separate entry, and a single product change would have to invalidate all of
+     * them. Single-product reads are the hot, easily invalidated path, so we cache those.
+     */
     @Transactional(readOnly = true)
     public PageResponse<ProductResponse> search(String text, String category,
                                                 BigDecimal minPrice, BigDecimal maxPrice,
@@ -53,6 +62,12 @@ public class ProductService {
         return PageResponse.from(productRepository.findAll(spec, pageable), ProductResponse::from);
     }
 
+    /**
+     * Cache-aside read: look in Redis first; on a miss, load from PostgreSQL and store the
+     * result. Exceptions (e.g. 404 for unknown ids) are never cached. Writes don't update this
+     * entry; they publish ProductsChangedEvent and ProductCacheInvalidator evicts it after commit.
+     */
+    @Cacheable(cacheNames = ProductCache.NAME, key = "#id")
     @Transactional(readOnly = true)
     public ProductResponse getById(Long id) {
         return ProductResponse.from(loadActive(id));
@@ -75,6 +90,7 @@ public class ProductService {
                 request.price(), request.stockQuantity());
         // No save() call needed: the entity is managed, so Hibernate's dirty checking
         // writes the changes at commit.
+        eventPublisher.publishEvent(ProductsChangedEvent.of(id)); // cache eviction runs after commit
         log.info("Product id={} updated by user id={}", id, user.id());
         return ProductResponse.from(product);
     }
@@ -84,6 +100,7 @@ public class ProductService {
         Product product = loadActive(id);
         requireOwnerOrAdmin(product, user);
         product.deactivate();
+        eventPublisher.publishEvent(ProductsChangedEvent.of(id)); // cache eviction runs after commit
         log.info("Product id={} deactivated by user id={}", id, user.id());
     }
 

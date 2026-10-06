@@ -23,6 +23,20 @@ spring:
       pageable:
         default-page-size: 20
         max-page-size: 100
+    # Phase 3: Redis is a CACHE here, never the source of truth.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Short timeouts: if Redis is slow or down we want to fall back to PostgreSQL
+      # quickly, not hang every request for Lettuce's default 60 seconds.
+      timeout: 500ms
+      connect-timeout: 500ms
+      # We have no Redis repositories; this avoids noisy "store assignment" startup logs
+      # caused by having both Spring Data JPA and Spring Data Redis on the classpath.
+      repositories:
+        enabled: false
+  cache:
+    type: redis
 
 server:
   port: ${PRODUCT_SERVICE_PORT:8082}
@@ -37,12 +51,21 @@ app:
     issuer: shopflow
   internal:
     api-key: ${INTERNAL_API_KEY:}
+  cache:
+    # How long a cached product may live even if an eviction is missed (safety net).
+    product-ttl: ${PRODUCT_CACHE_TTL:PT10M}
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  health:
+    redis:
+      # The cache is optional (reads fall back to PostgreSQL), so a Redis outage must
+      # not mark this service DOWN. Otherwise a cache failure would take the service
+      # out of the load balancer / get it restarted by Kubernetes.
+      enabled: false
 
 logging:
   level:

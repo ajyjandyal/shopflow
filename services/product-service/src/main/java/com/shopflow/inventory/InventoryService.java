@@ -7,8 +7,10 @@ import com.shopflow.inventory.dto.ReservationResponse;
 import com.shopflow.inventory.dto.ReserveStockRequest;
 import com.shopflow.product.Product;
 import com.shopflow.product.ProductRepository;
+import com.shopflow.product.ProductsChangedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +28,11 @@ import java.util.stream.Collectors;
  * Both reserve() and release() are IDEMPOTENT: calling them twice with the same
  * reservation id has the same effect as calling them once. This is what makes it safe
  * for order-service to retry after a timeout, or to release "just in case".
+ *
+ * Phase 3: whenever stock actually changes, a ProductsChangedEvent is published so the
+ * cached public product view (which shows stockQuantity) is evicted after commit. The
+ * internal snapshot/reservation paths themselves never read from the cache: decisions
+ * about stock must always use the real, locked database rows.
  */
 @Service
 public class InventoryService {
@@ -35,11 +42,14 @@ public class InventoryService {
 
     private final ProductRepository productRepository;
     private final StockReservationRepository reservationRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public InventoryService(ProductRepository productRepository,
-                            StockReservationRepository reservationRepository) {
+                            StockReservationRepository reservationRepository,
+                            ApplicationEventPublisher eventPublisher) {
         this.productRepository = productRepository;
         this.reservationRepository = reservationRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -86,6 +96,7 @@ public class InventoryService {
         }
 
         reservation.markReserved(lines);
+        eventPublisher.publishEvent(new ProductsChangedEvent(quantities.keySet()));
         log.info("Reservation {} RESERVED: {} product(s)", reservation.getId(), lines.size());
         return ReservationResponse.from(reservation);
         // If anything above threw, the transaction rolls back: stock is restored AND the
@@ -117,6 +128,7 @@ public class InventoryService {
                     product.increaseStock(quantities.get(product.getId()));
                 }
                 reservation.markReleased();
+                eventPublisher.publishEvent(new ProductsChangedEvent(quantities.keySet()));
                 log.info("Reservation {} RELEASED: stock returned", reservationId);
                 return ReservationResponse.from(reservation);
             }
